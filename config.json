@@ -1,0 +1,42 @@
+{
+    "astra_db": {
+      "client_id": "a240df36-45c0-4e1a-a227-2c9a3b1b4822",
+      "client_secret": "AstraCS:zwwrMyRbmlevzBlrKlCkxrDR:c561c306f3a1806fcfec09c44c236e3e13966b620ff1120312f42f845f791b8b", 
+      "secure_connect_bundle": "C:\\Users\\Ameya\\Downloads\\comp_2_3_4_integration-main\\comp_2_3_4_integration-main\\secure-connect-bundle.zip",
+      "keyspace": "memory_db"
+    },
+    "component2": {
+      "model_name": "emotion_model_v2",
+      "batch_size": 32,
+      "max_sequence_length": 512,
+      "confidence_threshold": 0.7,
+      "enable_emotion_regulation_detection": true
+    },
+    "component3": {
+      "model_name": "semantic_model_v2",
+      "enable_entity_extraction": true,
+      "enable_topic_modeling": true,
+      "enable_future_event_detection": true,
+      "max_entities_per_type": 10,
+      "topic_model_threshold": 0.5
+    },
+    "component4": {
+      "config_path": null,
+      "enable_quality_control": true,
+      "auto_repair": false,
+      "normalization_method": "minmax",
+      "max_processing_time_ms": 100
+    },
+    "logging": {
+      "level": "INFO",
+      "log_file": "production_integration.log",
+      "enable_component_logging": true,
+      "log_processing_times": true
+    },
+    "performance": {
+      "enable_performance_tracking": true,
+      "metrics_window_size": 100,
+      "batch_processing_enabled": true,
+      "max_batch_size": 50
+    }
+}
