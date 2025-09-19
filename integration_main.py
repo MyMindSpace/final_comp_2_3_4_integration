@@ -184,6 +184,145 @@ class AstraDBConnector:
             logger.error(f"❌ Error pushing to {collection_name}: {str(e)}")
             return False
 
+class UserHistoryContextClient:
+    """Client for interacting with the User History Context API"""
+    
+    def __init__(self):
+        self.base_url = os.getenv("USER_HISTORY_CONTEXT_ENDPOINT", "https://user-history-context-service-222233295505.asia-south1.run.app")
+        
+        # Ensure the base URL doesn't end with a slash for proper endpoint construction
+        if self.base_url.endswith('/'):
+            self.base_url = self.base_url.rstrip('/')
+        
+        logger.info(f"✅ User History Context client initialized with endpoint: {self.base_url}")
+    
+    def get_user_history_context(self, user_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Retrieve user's history context from the database
+        
+        Args:
+            user_id: User identifier
+            
+        Returns:
+            User history context data or None if not found
+        """
+        try:
+            # Get user's history context
+            response = requests.get(
+                f"{self.base_url}/api/user-history/user/{user_id}",
+                headers={"Content-Type": "application/json"},
+                timeout=30
+            )
+            
+            if response.status_code == 200:
+                response_data = response.json()
+                
+                # Handle the API response format: {"success": true, "data": [...], "count": N}
+                if isinstance(response_data, dict) and "data" in response_data:
+                    contexts = response_data["data"]
+                    if contexts:
+                        # Return the most recent context (first in the list)
+                        logger.info(f"✅ Retrieved user history context for user {user_id}")
+                        return contexts[0]
+                    else:
+                        logger.info(f"ℹ️ No user history context found for user {user_id}")
+                        return None
+                elif isinstance(response_data, list) and response_data:
+                    # Fallback: if response is directly a list
+                    logger.info(f"✅ Retrieved user history context for user {user_id}")
+                    return response_data[0]
+                else:
+                    logger.info(f"ℹ️ No user history context found for user {user_id}")
+                    return None
+            elif response.status_code == 404:
+                logger.info(f"ℹ️ No user history context found for user {user_id}")
+                return None
+            else:
+                logger.error(f"❌ Failed to retrieve user history context for user {user_id}: {response.status_code} - {response.text}")
+                return None
+                
+        except requests.exceptions.Timeout:
+            logger.error(f"❌ Timeout while retrieving user history context for user {user_id}")
+            return None
+        except Exception as e:
+            logger.error(f"❌ Error retrieving user history context for user {user_id}: {str(e)}")
+            return None
+    
+    def create_user_history_context(self, user_id: str, context_data: Dict[str, Any]) -> Optional[str]:
+        """
+        Create a new user history context entry
+        
+        Args:
+            user_id: User identifier
+            context_data: User history context data
+            
+        Returns:
+            Context ID if successful, None otherwise
+        """
+        try:
+            # Prepare the data with user_id
+            context_data["user_id"] = user_id
+            
+            response = requests.post(
+                f"{self.base_url}/api/user-history",
+                json=context_data,
+                headers={"Content-Type": "application/json"},
+                timeout=30
+            )
+            
+            if response.status_code == 201:
+                response_data = response.json()
+                if isinstance(response_data, dict) and "data" in response_data:
+                    context_id = response_data["data"].get("id")
+                    logger.info(f"✅ Created user history context for user {user_id}")
+                    return context_id
+                else:
+                    logger.error(f"❌ Unexpected response format when creating user history context: {type(response_data)}")
+                    return None
+            else:
+                logger.error(f"❌ Failed to create user history context for user {user_id}: {response.status_code} - {response.text}")
+                return None
+                
+        except requests.exceptions.Timeout:
+            logger.error(f"❌ Timeout while creating user history context for user {user_id}")
+            return None
+        except Exception as e:
+            logger.error(f"❌ Error creating user history context for user {user_id}: {str(e)}")
+            return None
+    
+    def update_user_history_context(self, context_id: str, context_data: Dict[str, Any]) -> bool:
+        """
+        Update an existing user history context entry
+        
+        Args:
+            context_id: Context identifier
+            context_data: Updated user history context data
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            response = requests.put(
+                f"{self.base_url}/api/user-history/{context_id}",
+                json=context_data,
+                headers={"Content-Type": "application/json"},
+                timeout=30
+            )
+            
+            if response.status_code == 200:
+                logger.info(f"✅ Updated user history context {context_id}")
+                return True
+            else:
+                logger.error(f"❌ Failed to update user history context {context_id}: {response.status_code} - {response.text}")
+                return False
+                
+        except requests.exceptions.Timeout:
+            logger.error(f"❌ Timeout while updating user history context {context_id}")
+            return False
+        except Exception as e:
+            logger.error(f"❌ Error updating user history context {context_id}: {str(e)}")
+            return False
+
 class JournalCRUDClient:
     """Client for interacting with the Journal CRUD API"""
     
@@ -353,6 +492,9 @@ class AstraDBIntegrator:
         # Initialize Journal CRUD client
         self.journal_client = JournalCRUDClient()
         
+        # Initialize User History Context client
+        self.user_history_client = UserHistoryContextClient()
+        
         # Initialize Component 2: Emotion Analysis
         self.emotion_analyzer = EmotionAnalyzer()
         
@@ -390,6 +532,97 @@ class AstraDBIntegrator:
         else:
             # Generate a consistent UUID from the input string
             return self._generate_consistent_uuid(input_id)
+    
+    def _convert_api_to_user_history_context(self, api_data: Dict[str, Any]) -> Optional[UserHistoryContext]:
+        """Convert API response to UserHistoryContext object"""
+        try:
+            if not api_data:
+                return None
+            
+            # Parse timestamp if it exists
+            last_entry_timestamp = None
+            if api_data.get("last_entry_timestamp"):
+                try:
+                    if isinstance(api_data["last_entry_timestamp"], str):
+                        last_entry_timestamp = datetime.fromisoformat(api_data["last_entry_timestamp"].replace('Z', '+00:00'))
+                    else:
+                        last_entry_timestamp = datetime.now()
+                except (ValueError, TypeError):
+                    last_entry_timestamp = datetime.now()
+            
+            return UserHistoryContext(
+                writing_frequency_baseline=api_data.get("writing_frequency_baseline", 0.0),
+                emotional_baseline=api_data.get("emotional_baseline", {}),
+                topic_preferences=api_data.get("topic_preferences", []),
+                behavioral_patterns=api_data.get("behavioral_patterns", {}),
+                last_entry_timestamp=last_entry_timestamp,
+                total_entries=api_data.get("total_entries", 0),
+                avg_session_duration=api_data.get("avg_session_duration", 0.0),
+                preferred_writing_times=api_data.get("preferred_writing_times", []),
+                emotional_volatility=api_data.get("emotional_volatility", 0.0),
+                topic_consistency=api_data.get("topic_consistency", 0.0),
+                social_connectivity=api_data.get("social_connectivity", 0.0)
+            )
+        except Exception as e:
+            logger.error(f"❌ Error converting API data to UserHistoryContext: {e}")
+            return None
+    
+    def _convert_user_history_context_to_api(self, user_history: UserHistoryContext) -> Dict[str, Any]:
+        """Convert UserHistoryContext object to API format"""
+        try:
+            return {
+                "writing_frequency_baseline": user_history.writing_frequency_baseline,
+                "emotional_baseline": user_history.emotional_baseline,
+                "topic_preferences": user_history.topic_preferences,
+                "behavioral_patterns": user_history.behavioral_patterns,
+                "last_entry_timestamp": user_history.last_entry_timestamp.isoformat() + "Z" if user_history.last_entry_timestamp else None,
+                "total_entries": user_history.total_entries,
+                "avg_session_duration": user_history.avg_session_duration,
+                "preferred_writing_times": user_history.preferred_writing_times,
+                "emotional_volatility": user_history.emotional_volatility,
+                "topic_consistency": user_history.topic_consistency,
+                "social_connectivity": user_history.social_connectivity
+            }
+        except Exception as e:
+            logger.error(f"❌ Error converting UserHistoryContext to API format: {e}")
+            return {}
+    
+    def _fetch_user_history_context(self, user_id: str) -> Optional[UserHistoryContext]:
+        """Fetch user history context from the database"""
+        try:
+            api_data = self.user_history_client.get_user_history_context(user_id)
+            if api_data:
+                return self._convert_api_to_user_history_context(api_data)
+            else:
+                logger.info(f"ℹ️ No user history context found for user {user_id}, will create new one")
+                return None
+        except Exception as e:
+            logger.error(f"❌ Error fetching user history context for user {user_id}: {e}")
+            return None
+    
+    def _save_user_history_context(self, user_id: str, user_history: UserHistoryContext) -> bool:
+        """Save or update user history context in the database"""
+        try:
+            # First try to get existing context
+            existing_context = self.user_history_client.get_user_history_context(user_id)
+            
+            if existing_context:
+                # Update existing context
+                context_id = existing_context.get("id")
+                if context_id:
+                    api_data = self._convert_user_history_context_to_api(user_history)
+                    return self.user_history_client.update_user_history_context(context_id, api_data)
+                else:
+                    logger.warning(f"⚠️ Existing context found but no ID, creating new one for user {user_id}")
+            else:
+                # Create new context
+                api_data = self._convert_user_history_context_to_api(user_history)
+                context_id = self.user_history_client.create_user_history_context(user_id, api_data)
+                return context_id is not None
+                
+        except Exception as e:
+            logger.error(f"❌ Error saving user history context for user {user_id}: {e}")
+            return False
     
 
     def process_journal_entry(
@@ -431,6 +664,27 @@ class AstraDBIntegrator:
 
         
         logger.info(f"🔄 Processing entry {entry_id} for user {user_id}")
+        
+        # Fetch user history context if not provided
+        if user_history is None:
+            logger.info("📊 Fetching user history context from database...")
+            user_history = self._fetch_user_history_context(user_id)
+            if user_history is None:
+                # Create a default user history context if none exists
+                user_history = UserHistoryContext(
+                    writing_frequency_baseline=0.0,
+                    emotional_baseline={},
+                    topic_preferences=[],
+                    behavioral_patterns={},
+                    last_entry_timestamp=None,
+                    total_entries=0,
+                    avg_session_duration=0.0,
+                    preferred_writing_times=[],
+                    emotional_volatility=0.0,
+                    topic_consistency=0.0,
+                    social_connectivity=0.0
+                )
+                logger.info("📊 Created default user history context")
         
         try:
             # Step 1: Component 2 - Emotion Analysis
@@ -524,6 +778,41 @@ class AstraDBIntegrator:
             )
             
             logger.info(f"✅ Processing completed in {processing_time:.1f}ms")
+            
+            # Update and save user history context after processing
+            try:
+                logger.info("💾 Updating user history context...")
+                # Update user history context with new entry information
+                user_history.total_entries += 1
+                user_history.last_entry_timestamp = entry_timestamp
+                
+                # Update preferred writing times
+                hour = entry_timestamp.hour
+                if hour not in user_history.preferred_writing_times:
+                    user_history.preferred_writing_times.append(hour)
+                    # Keep only the last 5 preferred times
+                    if len(user_history.preferred_writing_times) > 5:
+                        user_history.preferred_writing_times = user_history.preferred_writing_times[-5:]
+                
+                # Update average session duration (simplified calculation)
+                if user_history.avg_session_duration == 0:
+                    user_history.avg_session_duration = len(text.split()) * 0.5  # Rough estimate
+                else:
+                    # Update with exponential moving average
+                    new_duration = len(text.split()) * 0.5
+                    user_history.avg_session_duration = (user_history.avg_session_duration * 0.9) + (new_duration * 0.1)
+                
+                # Save updated user history context
+                save_success = self._save_user_history_context(user_id, user_history)
+                if save_success:
+                    logger.info("✅ User history context updated successfully")
+                else:
+                    logger.warning("⚠️ Failed to save user history context")
+                    
+            except Exception as e:
+                logger.error(f"❌ Error updating user history context: {e}")
+                # Don't fail the entire process if user history update fails
+            
             return output
             
         except Exception as e:
