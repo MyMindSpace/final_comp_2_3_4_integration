@@ -30,6 +30,14 @@ class JournalProcessResponse(BaseModel):
     processing_time_ms: float = None
     entry_id: str = None
 
+class UserHistoryContextRequest(BaseModel):
+    user_id: str
+
+class UserHistoryContextResponse(BaseModel):
+    success: bool
+    message: str
+    user_history_context: dict = None
+
 # Initialize your integrator
 integrator = AstraDBIntegrator()
 
@@ -85,6 +93,29 @@ async def process_journal_background(journal_id: str):
         logger.info(f"Background processing completed for {journal_id}")
     except Exception as e:
         logger.error(f"Background processing failed for {journal_id}: {e}")
+
+@app.get("/user-history-context/{user_id}", response_model=UserHistoryContextResponse)
+async def get_user_history_context(user_id: str):
+    """Get user history context for a specific user"""
+    try:
+        user_history_context = integrator.user_history_client.get_user_history_context(user_id)
+        
+        if user_history_context:
+            return UserHistoryContextResponse(
+                success=True,
+                message="User history context retrieved successfully",
+                user_history_context=user_history_context
+            )
+        else:
+            return UserHistoryContextResponse(
+                success=False,
+                message="No user history context found for this user",
+                user_history_context=None
+            )
+            
+    except Exception as e:
+        logger.error(f"Failed to retrieve user history context: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/health")
 async def health_check():
