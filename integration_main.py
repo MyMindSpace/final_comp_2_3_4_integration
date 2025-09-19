@@ -21,6 +21,7 @@ import logging
 import numpy as np
 from dotenv import load_dotenv
 import os
+import requests
 
 load_dotenv()
 
@@ -183,6 +184,160 @@ class AstraDBConnector:
             logger.error(f"❌ Error pushing to {collection_name}: {str(e)}")
             return False
 
+class JournalCRUDClient:
+    """Client for interacting with the Journal CRUD API"""
+    
+    def __init__(self):
+        self.base_url = os.getenv("JOURNAL_CRUD_ENDPOINT", "https://journal-crud-service-222233295505.asia-south1.run.app")
+        
+        # Ensure the base URL doesn't end with a slash for proper endpoint construction
+        if self.base_url.endswith('/'):
+            self.base_url = self.base_url.rstrip('/')
+        
+        logger.info(f"✅ Journal CRUD client initialized with endpoint: {self.base_url}")
+    
+    def get_user_journals(self, user_id: str, limit: int = 10, offset: int = 0) -> List[Dict[str, Any]]:
+        """
+        Retrieve user's journal entries from the database
+        
+        Args:
+            user_id: User identifier
+            limit: Maximum number of entries to retrieve
+            offset: Number of entries to skip (for pagination)
+            
+        Returns:
+            List of journal entries
+        """
+        try:
+            # Get user's journals with pagination
+            response = requests.get(
+                f"{self.base_url}/api/journals/user/{user_id}",
+                params={"limit": limit, "offset": offset},
+                headers={"Content-Type": "application/json"},
+                timeout=30
+            )
+            
+            if response.status_code == 200:
+                response_data = response.json()
+                
+                # Handle the API response format: {"success": true, "data": [...], "count": N}
+                if isinstance(response_data, dict) and "data" in response_data:
+                    journals = response_data["data"]
+                    logger.info(f"✅ Retrieved {len(journals)} journal entries for user {user_id}")
+                    return journals
+                elif isinstance(response_data, list):
+                    # Fallback: if response is directly a list
+                    journals = response_data
+                    logger.info(f"✅ Retrieved {len(journals)} journal entries for user {user_id}")
+                    return journals
+                else:
+                    logger.error(f"❌ Unexpected response format: {type(response_data)}")
+                    return []
+            else:
+                logger.error(f"❌ Failed to retrieve journals for user {user_id}: {response.status_code} - {response.text}")
+                return []
+                
+        except requests.exceptions.Timeout:
+            logger.error(f"❌ Timeout while retrieving journals for user {user_id}")
+            return []
+        except Exception as e:
+            logger.error(f"❌ Error retrieving journals for user {user_id}: {str(e)}")
+            return []
+    
+    def get_journal_by_id(self, journal_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Retrieve a specific journal entry by ID
+        
+        Args:
+            journal_id: Journal entry identifier
+            
+        Returns:
+            Journal entry data or None if not found
+        """
+        try:
+            response = requests.get(
+                f"{self.base_url}/api/journals/{journal_id}",
+                headers={"Content-Type": "application/json"},
+                timeout=30
+            )
+            
+            if response.status_code == 200:
+                response_data = response.json()
+                
+                # Handle the API response format: {"success": true, "data": {...}}
+                if isinstance(response_data, dict) and "data" in response_data:
+                    journal = response_data["data"]
+                    logger.info(f"✅ Retrieved journal entry {journal_id}")
+                    return journal
+                elif isinstance(response_data, dict) and "id" in response_data:
+                    # Fallback: if response is directly the journal object
+                    journal = response_data
+                    logger.info(f"✅ Retrieved journal entry {journal_id}")
+                    return journal
+                else:
+                    logger.error(f"❌ Unexpected response format for journal {journal_id}: {type(response_data)}")
+                    return None
+            elif response.status_code == 404:
+                logger.warning(f"⚠️ Journal entry {journal_id} not found")
+                return None
+            else:
+                logger.error(f"❌ Failed to retrieve journal {journal_id}: {response.status_code} - {response.text}")
+                return None
+                
+        except requests.exceptions.Timeout:
+            logger.error(f"❌ Timeout while retrieving journal {journal_id}")
+            return None
+        except Exception as e:
+            logger.error(f"❌ Error retrieving journal {journal_id}: {str(e)}")
+            return None
+    
+    def search_user_journals(self, user_id: str, query: str, limit: int = 10) -> List[Dict[str, Any]]:
+        """
+        Search user's journal entries by title, content, or tags
+        
+        Args:
+            user_id: User identifier
+            query: Search query
+            limit: Maximum number of results
+            
+        Returns:
+            List of matching journal entries
+        """
+        try:
+            response = requests.get(
+                f"{self.base_url}/api/journals/user/{user_id}/search",
+                params={"q": query, "limit": limit},
+                headers={"Content-Type": "application/json"},
+                timeout=30
+            )
+            
+            if response.status_code == 200:
+                response_data = response.json()
+                
+                # Handle the API response format: {"success": true, "data": [...], "count": N}
+                if isinstance(response_data, dict) and "data" in response_data:
+                    journals = response_data["data"]
+                    logger.info(f"✅ Found {len(journals)} journal entries matching query '{query}' for user {user_id}")
+                    return journals
+                elif isinstance(response_data, list):
+                    # Fallback: if response is directly a list
+                    journals = response_data
+                    logger.info(f"✅ Found {len(journals)} journal entries matching query '{query}' for user {user_id}")
+                    return journals
+                else:
+                    logger.error(f"❌ Unexpected search response format: {type(response_data)}")
+                    return []
+            else:
+                logger.error(f"❌ Failed to search journals for user {user_id}: {response.status_code} - {response.text}")
+                return []
+                
+        except requests.exceptions.Timeout:
+            logger.error(f"❌ Timeout while searching journals for user {user_id}")
+            return []
+        except Exception as e:
+            logger.error(f"❌ Error searching journals for user {user_id}: {str(e)}")
+            return []
+
 class AstraDBIntegrator:
     """
     Integrates Components 2+3+4 to produce AstraDB-formatted outputs
@@ -194,6 +349,9 @@ class AstraDBIntegrator:
         
         # Initialize AstraDB connector
         self.astra_connector = AstraDBConnector()
+        
+        # Initialize Journal CRUD client
+        self.journal_client = JournalCRUDClient()
         
         # Initialize Component 2: Emotion Analysis
         self.emotion_analyzer = EmotionAnalyzer()
@@ -216,6 +374,22 @@ class AstraDBIntegrator:
             return True
         except ValueError:
             return False
+    
+    def _generate_consistent_uuid(self, input_string: str) -> str:
+        """Generate a consistent UUID from a string using MD5 hash"""
+        import hashlib
+        # Create a namespace UUID for consistent generation
+        namespace = uuid.UUID('6ba7b810-9dad-11d1-80b4-00c04fd430c8')
+        # Generate UUID5 from the input string
+        return str(uuid.uuid5(namespace, input_string))
+    
+    def _ensure_uuid_format(self, input_id: str) -> str:
+        """Ensure the input ID is in proper UUID format"""
+        if self._is_valid_uuid(input_id):
+            return input_id
+        else:
+            # Generate a consistent UUID from the input string
+            return self._generate_consistent_uuid(input_id)
     
 
     def process_journal_entry(
@@ -474,10 +648,10 @@ class AstraDBIntegrator:
         # STRICTLY follow the exact schema provided
         return {
             "id": str(uuid.uuid4()),
-            "user_id": user_id,
-            "entry_id": entry_id,
+            "user_id": self._ensure_uuid_format(user_id),  # Ensure UUID format
+            "entry_id": self._ensure_uuid_format(entry_id),  # Ensure UUID format
             "message_content": text,  # EXACT field name as per schema
-            "message_type": message_type,
+            "message_type": message_type if message_type in ["user_message", "ai_response", "system_message"] else "user_message",
             "timestamp": entry_timestamp.isoformat() + "Z",  # ISO format with Z suffix as per schema
             "session_id": session_id,
             "conversation_context": conversation_context,
@@ -558,8 +732,8 @@ class AstraDBIntegrator:
         # STRICTLY follow the exact schema provided
         return {
             "id": str(uuid.uuid4()),
-            "user_id": user_id,
-            "entry_id": entry_id,
+            "user_id": self._ensure_uuid_format(user_id),  # Ensure UUID format
+            "entry_id": self._ensure_uuid_format(entry_id),  # Ensure UUID format
             "session_id": session_id,
             "content_type": content_type,
             "title": title,
@@ -672,6 +846,196 @@ class AstraDBIntegrator:
         
         return results
     
+    def process_user_journals_from_db(
+        self,
+        user_id: str,
+        limit: int = 10,
+        offset: int = 0,
+        push_to_astra: bool = True
+    ) -> List[AstraDBOutput]:
+        """
+        Process user's journal entries from the database
+        
+        Args:
+            user_id: User identifier
+            limit: Maximum number of entries to process
+            offset: Number of entries to skip (for pagination)
+            push_to_astra: Whether to push results to AstraDB
+            
+        Returns:
+            List of AstraDBOutput objects
+        """
+        logger.info(f"🔄 Processing journal entries for user {user_id} from database...")
+        
+        # Retrieve journal entries from database
+        journal_entries = self.journal_client.get_user_journals(user_id, limit, offset)
+        
+        if not journal_entries:
+            logger.warning(f"⚠️ No journal entries found for user {user_id}")
+            return []
+        
+        results = []
+        successful_pushes = 0
+        
+        for journal_entry in journal_entries:
+            try:
+                # Handle case where journal_entry might be a string (API response format issue)
+                if isinstance(journal_entry, str):
+                    logger.warning(f"⚠️ Journal entry is a string, skipping: {journal_entry}")
+                    continue
+                
+                # Extract data from journal entry
+                journal_id = journal_entry.get("id")
+                title = journal_entry.get("title", "")
+                content = journal_entry.get("content", "")
+                mood = journal_entry.get("mood", "neutral")
+                tags = journal_entry.get("tags", [])
+                created_at = journal_entry.get("createdAt")
+                updated_at = journal_entry.get("updatedAt")
+                
+                # Parse timestamps (handle Firestore timestamp format)
+                entry_timestamp = None
+                if created_at:
+                    try:
+                        # Handle Firestore timestamp format: {"_seconds": 1757973328, "_nanoseconds": 927000000}
+                        if isinstance(created_at, dict) and "_seconds" in created_at:
+                            entry_timestamp = datetime.fromtimestamp(created_at["_seconds"])
+                        # Handle ISO string format
+                        elif isinstance(created_at, str):
+                            entry_timestamp = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+                        else:
+                            entry_timestamp = datetime.now()
+                    except (ValueError, TypeError, KeyError):
+                        entry_timestamp = datetime.now()
+                else:
+                    entry_timestamp = datetime.now()
+                
+                # Combine title and content for processing
+                full_text = f"{title}\n\n{content}" if title else content
+                
+                if not full_text.strip():
+                    logger.warning(f"⚠️ Skipping empty journal entry {journal_id}")
+                    continue
+                
+                logger.info(f"📝 Processing journal entry: {title[:50]}...")
+                
+                # Process the journal entry
+                result = self.process_journal_entry(
+                    text=full_text,
+                    user_id=user_id,
+                    entry_id=journal_id,
+                    entry_timestamp=entry_timestamp,
+                    message_type="user_message"  # Use valid message type for journal entries
+                )
+                
+                results.append(result)
+                
+                # Push to AstraDB if requested
+                if push_to_astra:
+                    success = self.push_to_astra_db(result)
+                    if success:
+                        successful_pushes += 1
+                
+            except Exception as e:
+                # Safe way to get journal ID for error logging
+                journal_id_for_error = "unknown"
+                if isinstance(journal_entry, dict):
+                    journal_id_for_error = journal_entry.get('id', 'unknown')
+                elif isinstance(journal_entry, str):
+                    journal_id_for_error = journal_entry
+                
+                logger.error(f"❌ Failed to process journal entry {journal_id_for_error}: {e}")
+                continue
+        
+        logger.info(f"✅ Processed {len(results)} journal entries, {successful_pushes} successfully pushed to AstraDB")
+        return results
+    
+    def process_specific_journal_from_db(
+        self,
+        journal_id: str,
+        push_to_astra: bool = True
+    ) -> Optional[AstraDBOutput]:
+        """
+        Process a specific journal entry from the database by ID
+        
+        Args:
+            journal_id: Journal entry identifier
+            push_to_astra: Whether to push result to AstraDB
+            
+        Returns:
+            AstraDBOutput object or None if not found
+        """
+        logger.info(f"🔄 Processing specific journal entry {journal_id} from database...")
+        
+        # Retrieve journal entry from database
+        journal_entry = self.journal_client.get_journal_by_id(journal_id)
+        
+        if not journal_entry:
+            logger.warning(f"⚠️ Journal entry {journal_id} not found")
+            return None
+        
+        try:
+            # Extract data from journal entry
+            user_id = journal_entry.get("userId")
+            title = journal_entry.get("title", "")
+            content = journal_entry.get("content", "")
+            mood = journal_entry.get("mood", "neutral")
+            tags = journal_entry.get("tags", [])
+            created_at = journal_entry.get("createdAt")
+            
+            if not user_id:
+                logger.error(f"❌ Journal entry {journal_id} missing userId")
+                return None
+            
+            # Parse timestamp (handle Firestore timestamp format)
+            entry_timestamp = None
+            if created_at:
+                try:
+                    # Handle Firestore timestamp format: {"_seconds": 1757973328, "_nanoseconds": 927000000}
+                    if isinstance(created_at, dict) and "_seconds" in created_at:
+                        entry_timestamp = datetime.fromtimestamp(created_at["_seconds"])
+                    # Handle ISO string format
+                    elif isinstance(created_at, str):
+                        entry_timestamp = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+                    else:
+                        entry_timestamp = datetime.now()
+                except (ValueError, TypeError, KeyError):
+                    entry_timestamp = datetime.now()
+            else:
+                entry_timestamp = datetime.now()
+            
+            # Combine title and content for processing
+            full_text = f"{title}\n\n{content}" if title else content
+            
+            if not full_text.strip():
+                logger.warning(f"⚠️ Journal entry {journal_id} has empty content")
+                return None
+            
+            logger.info(f"📝 Processing journal entry: {title[:50]}...")
+            
+            # Process the journal entry
+            result = self.process_journal_entry(
+                text=full_text,
+                user_id=user_id,
+                entry_id=journal_id,
+                entry_timestamp=entry_timestamp,
+                message_type="user_message"  # Use valid message type for journal entries
+            )
+            
+            # Push to AstraDB if requested
+            if push_to_astra:
+                success = self.push_to_astra_db(result)
+                if success:
+                    logger.info(f"✅ Successfully pushed journal entry {journal_id} to AstraDB")
+                else:
+                    logger.error(f"❌ Failed to push journal entry {journal_id} to AstraDB")
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to process journal entry {journal_id}: {e}")
+            return None
+    
     def export_for_astra_db(self, output: AstraDBOutput) -> Dict[str, Any]:
         """Export formatted data ready for AstraDB insertion"""
         return {
@@ -689,38 +1053,103 @@ if __name__ == "__main__":
     # Initialize integrator
     integrator = AstraDBIntegrator()
     
-    # Create sample user history context
-    user_history = UserHistoryContext(
-        writing_frequency_baseline=0.75,
-        emotional_baseline={
-            "joy": 0.6,
-            "sadness": 0.2,
-            "anger": 0.1,
-            "fear": 0.1,
-            "surprise": 0.3,
-            "disgust": 0.05,
-            "anticipation": 0.4,
-            "trust": 0.7
-        },
-        topic_preferences=["personal_growth", "relationships", "work", "health"],
-        behavioral_patterns={
-            "writing_style": "reflective",
-            "session_length": "medium",
-            "emotional_expression": "moderate"
-        },
-        last_entry_timestamp=datetime.now(),
-        total_entries=25,
-        avg_session_duration=15.5,
-        preferred_writing_times=[9, 14, 21],
-        emotional_volatility=0.3,
-        topic_consistency=0.8,
-        social_connectivity=0.6
-    )
+    # Example 1: Process journal entries from database for a specific user
+    print("=" * 60)
+    print("🔄 PROCESSING JOURNAL ENTRIES FROM DATABASE")
+    print("=" * 60)
     
-    # Test with sample journal entry
-    sample_text = "I have an event at Google on 2nd of September with my friend Sarah."
+    # Replace with actual user ID from your database
+    test_user_id = "ninad"  # Using the example user ID from the API documentation
     
     try:
+        # Process user's journal entries from database
+        results = integrator.process_user_journals_from_db(
+            user_id=test_user_id,
+            limit=5,  # Process up to 5 entries
+            offset=0,
+            push_to_astra=True
+        )
+        
+        if results:
+            print(f"✅ Successfully processed {len(results)} journal entries for user {test_user_id}")
+            
+            # Save sample output for the first entry
+            if results:
+                astra_data = integrator.export_for_astra_db(results[0])
+                with open("astra_db_sample_output.json", "w") as f:
+                    json.dump(astra_data, f, indent=2, default=str)
+                print("📁 Sample output saved to astra_db_sample_output.json")
+        else:
+            print(f"⚠️ No journal entries found for user {test_user_id}")
+            
+    except Exception as e:
+        print(f"❌ Database processing failed: {e}")
+        import traceback
+        traceback.print_exc()
+    
+    print("\n" + "=" * 60)
+    print("🔄 PROCESSING SPECIFIC JOURNAL ENTRY BY ID")
+    print("=" * 60)
+    
+    # Example 2: Process a specific journal entry by ID
+    # Replace with an actual journal ID from your database
+    test_journal_id = "your-journal-id-here"  # Replace with actual ID
+    
+    try:
+        # Uncomment the following lines when you have a specific journal ID
+        # result = integrator.process_specific_journal_from_db(
+        #     journal_id=test_journal_id,
+        #     push_to_astra=True
+        # )
+        # 
+        # if result:
+        #     print(f"✅ Successfully processed journal entry {test_journal_id}")
+        #     print(f"Processing time: {result.processing_time_ms:.1f}ms")
+        # else:
+        #     print(f"❌ Failed to process journal entry {test_journal_id}")
+        
+        print("ℹ️ To test specific journal processing, replace 'test_journal_id' with an actual journal ID")
+        
+    except Exception as e:
+        print(f"❌ Specific journal processing failed: {e}")
+    
+    print("\n" + "=" * 60)
+    print("🔄 FALLBACK: PROCESSING HARDCODED EXAMPLE")
+    print("=" * 60)
+    
+    # Example 3: Fallback to hardcoded example (original functionality)
+    try:
+        # Create sample user history context
+        user_history = UserHistoryContext(
+            writing_frequency_baseline=0.75,
+            emotional_baseline={
+                "joy": 0.6,
+                "sadness": 0.2,
+                "anger": 0.1,
+                "fear": 0.1,
+                "surprise": 0.3,
+                "disgust": 0.05,
+                "anticipation": 0.4,
+                "trust": 0.7
+            },
+            topic_preferences=["personal_growth", "relationships", "work", "health"],
+            behavioral_patterns={
+                "writing_style": "reflective",
+                "session_length": "medium",
+                "emotional_expression": "moderate"
+            },
+            last_entry_timestamp=datetime.now(),
+            total_entries=25,
+            avg_session_duration=15.5,
+            preferred_writing_times=[9, 14, 21],
+            emotional_volatility=0.3,
+            topic_consistency=0.8,
+            social_connectivity=0.6
+        )
+        
+        # Test with sample journal entry
+        sample_text = "I have an event at Google on 2nd of September with my friend Sarah."
+        
         # Process the journal entry
         result = integrator.process_journal_entry(
             text=sample_text,
@@ -739,15 +1168,8 @@ if __name__ == "__main__":
             print(f"Semantic search ID: {result.semantic_search['id']}")
         else:
             print("❌ Failed to push data to AstraDB")
-        # Export for AstraDB (optional - for debugging)
-        astra_data = integrator.export_for_astra_db(result)
-        
-        # Save sample output
-        with open("astra_db_sample_output.json", "w") as f:
-            json.dump(astra_data, f, indent=2, default=str)
-        print("📁 Sample output saved to astra_db_sample_output.json")
-        
+            
     except Exception as e:
-        print(f"❌ Integration failed: {e}")
+        print(f"❌ Fallback processing failed: {e}")
         import traceback
         traceback.print_exc()

@@ -17,8 +17,9 @@ This repository contains a production-ready integration of three AI components t
 - **Component 4**: Feature Engineering Pipeline
 - **AstraDB Integration**: Vector database storage with semantic search capabilities
 - **Temporal Database**: Event storage and follow-up question generation
+- **Journal CRUD API Integration**: Real-time journal entry retrieval and processing
 
-The pipeline transforms natural language journal entries into structured data optimized for **vector operations**, **semantic similarity search**, and **temporal event tracking**.
+The pipeline transforms natural language journal entries into structured data optimized for **vector operations**, **semantic similarity search**, and **temporal event tracking**. It can now retrieve and process journal entries directly from the database instead of using hardcoded examples.
 
 ## 🚀 **Quick Start**
 
@@ -28,6 +29,9 @@ The pipeline transforms natural language journal entries into structured data op
 ASTRA_DB_APPLICATION_TOKEN=your_application_token_here
 ASTRA_DB_API_ENDPOINT=https://your-database-id-your-region.apps.astra.datastax.com
 ASTRA_DB_KEYSPACE=your_keyspace_name
+
+# Journal CRUD API endpoint (required for database integration)
+JOURNAL_CRUD_ENDPOINT=https://journal-crud-service-222233295505.asia-south1.run.app
 
 # Optional: Temporal database for event storage
 TEMPORAL_DB_ENDPOINT=https://your-temporal-db-endpoint.com/api/events
@@ -46,13 +50,44 @@ pip install astrapy python-dotenv requests
 ```
 
 ### **Run Integration**
+
+#### **Process Journal Entries from Database**
 ```python
 from integration_main import AstraDBIntegrator
 
 # Initialize integrator (automatically connects to databases)
 integrator = AstraDBIntegrator()
 
-# Process journal entry and push to databases
+# Process user's journal entries from database
+results = integrator.process_user_journals_from_db(
+    user_id="ninad",  # Replace with actual user ID
+    limit=5,  # Process up to 5 entries
+    push_to_astra=True
+)
+
+if results:
+    print(f"✅ Successfully processed {len(results)} journal entries")
+    for result in results:
+        print(f"📊 Chat embeddings ID: {result.chat_embeddings['id']}")
+        print(f"🔍 Semantic search ID: {result.semantic_search['id']}")
+```
+
+#### **Process Specific Journal Entry**
+```python
+# Process a specific journal entry by ID
+result = integrator.process_specific_journal_from_db(
+    journal_id="7NvPnsdh5qvkGb8S0DJA",  # Replace with actual journal ID
+    push_to_astra=True
+)
+
+if result:
+    print("✅ Successfully processed journal entry")
+    print(f"📊 Processing time: {result.processing_time_ms:.1f}ms")
+```
+
+#### **Fallback: Process Hardcoded Example**
+```python
+# Process hardcoded journal entry (original functionality)
 result = integrator.process_journal_entry(
     text="Had a great breakthrough at work today! Meeting with Sarah tomorrow at 2 PM.",
     user_id="user_123",
@@ -175,6 +210,7 @@ python integration_main.py
 ### **Multi-Database Integration Layer**
 - **AstraDB**: Vector database for semantic search and embeddings
 - **Temporal Database**: Event storage and follow-up question generation
+- **Journal CRUD API**: Real-time journal entry retrieval and processing
 - **HTTP Endpoints**: Direct collection endpoints as alternative
 - **Connection Management**: Automatic database connection via environment variables
 - **Data Formatting**: Strict schema compliance with proper data types
@@ -232,6 +268,9 @@ export ASTRA_DB_APPLICATION_TOKEN="your_application_token_here"
 export ASTRA_DB_API_ENDPOINT="https://your-database-id-your-region.apps.astra.datastax.com"
 export ASTRA_DB_KEYSPACE="your_keyspace_name"
 
+# Required for Journal CRUD API integration
+export JOURNAL_CRUD_ENDPOINT="https://journal-crud-service-222233295505.asia-south1.run.app"
+
 # Optional: Temporal database for event storage
 export TEMPORAL_DB_ENDPOINT="https://your-temporal-db-endpoint.com/api/events"
 
@@ -241,6 +280,35 @@ export SEMANTIC_SEARCH_COLLECTION_ENDPOINT="https://your-semantic-search-endpoin
 ```
 
 ### **Database Setup**
+
+#### **Journal CRUD API Integration**
+The system integrates with a Journal CRUD API to retrieve and process real journal entries from the database.
+
+**API Endpoints Used:**
+- `GET /api/journals/user/:userId` - Get journals by user ID (supports pagination)
+- `GET /api/journals/:id` - Get journal by ID
+- `GET /api/journals/user/:userId/search?q=query` - Search journals by title, content, or tags
+
+**Journal Entry Schema:**
+```json
+{
+  "id": "auto-generated-firestore-id",
+  "userId": "string (required)",
+  "title": "string (required, 1-200 chars)",
+  "content": "string (required, min 1 char)",
+  "mood": "string (optional: happy|sad|anxious|calm|excited|angry|neutral)",
+  "tags": ["array", "of", "strings"],
+  "createdAt": "2025-08-27T10:30:00.000Z",
+  "updatedAt": "2025-08-27T10:30:00.000Z"
+}
+```
+
+**Features:**
+- Automatic UUID generation for user IDs and entry IDs
+- Firestore timestamp format handling
+- Real-time journal entry processing
+- Batch processing with pagination support
+- Search functionality for content discovery
 
 #### **AstraDB Collections**
 ```sql
@@ -432,6 +500,16 @@ class AstraDBIntegrator:
         message_type: str = "user_message",
         user_history: Optional[UserHistoryContext] = None
     ) -> AstraDBOutput
+    def process_user_journals_from_db(
+        user_id: str,
+        limit: int = 10,
+        offset: int = 0,
+        push_to_astra: bool = True
+    ) -> List[AstraDBOutput]
+    def process_specific_journal_from_db(
+        journal_id: str,
+        push_to_astra: bool = True
+    ) -> Optional[AstraDBOutput]
     def push_to_astra_db(output: AstraDBOutput) -> bool
     def batch_process(entries: List[Dict]) -> List[AstraDBOutput]
     def export_for_astra_db(output: AstraDBOutput) -> Dict
@@ -443,6 +521,15 @@ class AstraDBConnector:
     def __init__(self)  # Auto-connects via environment variables
     def push_to_collection(collection_name: str, data: Dict) -> bool
     def get_collection(collection_name: str) -> Collection
+```
+
+### **JournalCRUDClient Class**
+```python
+class JournalCRUDClient:
+    def __init__(self)  # Auto-connects to Journal CRUD API
+    def get_user_journals(user_id: str, limit: int = 10, offset: int = 0) -> List[Dict]
+    def get_journal_by_id(journal_id: str) -> Optional[Dict]
+    def search_user_journals(user_id: str, query: str, limit: int = 10) -> List[Dict]
 ```
 
 ### **EventExtractor Class**
@@ -490,14 +577,63 @@ class Component4Processor:
 
 ## 💡 **Usage Examples**
 
-### **Basic Journal Entry Processing**
+### **Process Journal Entries from Database**
 ```python
 from integration_main import AstraDBIntegrator
 
 # Initialize
 integrator = AstraDBIntegrator()
 
-# Process single entry
+# Process user's journal entries from database
+results = integrator.process_user_journals_from_db(
+    user_id="ninad",  # Replace with actual user ID
+    limit=5,  # Process up to 5 entries
+    push_to_astra=True
+)
+
+if results:
+    print(f"✅ Successfully processed {len(results)} journal entries")
+    for result in results:
+        print(f"📊 Processing time: {result.processing_time_ms:.1f}ms")
+        print(f"📊 Chat embeddings ID: {result.chat_embeddings['id']}")
+        print(f"🔍 Semantic search ID: {result.semantic_search['id']}")
+```
+
+### **Process Specific Journal Entry**
+```python
+# Process a specific journal entry by ID
+result = integrator.process_specific_journal_from_db(
+    journal_id="7NvPnsdh5qvkGb8S0DJA",  # Replace with actual journal ID
+    push_to_astra=True
+)
+
+if result:
+    print("✅ Successfully processed journal entry")
+    print(f"📊 Processing time: {result.processing_time_ms:.1f}ms")
+```
+
+### **Search and Process Journal Entries**
+```python
+# Search for specific entries
+search_results = integrator.journal_client.search_user_journals(
+    user_id="ninad",
+    query="work",
+    limit=3
+)
+
+# Process search results
+for entry in search_results:
+    result = integrator.process_specific_journal_from_db(
+        journal_id=entry["id"],
+        push_to_astra=True
+    )
+    if result:
+        print(f"Processed: {entry.get('title', 'Untitled')}")
+```
+
+### **Fallback: Process Hardcoded Entry**
+```python
+# Process hardcoded journal entry (original functionality)
 result = integrator.process_journal_entry(
     text="Had an amazing meeting with Sarah today! We discussed the new project and I'm feeling really excited about it. Meeting with the team tomorrow at 2 PM.",
     user_id="user_123",
@@ -600,6 +736,16 @@ python integration_main.py
 - Event extraction accuracy validation
 
 ## 📋 **Changelog**
+
+### **v2.2.0 - Journal CRUD API Integration Release**
+- ✅ Journal CRUD API integration for real-time journal entry processing
+- ✅ Automatic UUID generation for user IDs and entry IDs
+- ✅ Firestore timestamp format handling
+- ✅ Batch processing with pagination support
+- ✅ Search functionality for content discovery
+- ✅ Enhanced error handling for API failures
+- ✅ Backward compatibility with hardcoded examples
+- ✅ Real-time journal entry retrieval and processing
 
 ### **v2.1.0 - Multi-Database Integration Release**
 - ✅ Complete Components 2+3+4 + Multi-database integration
